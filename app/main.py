@@ -4,6 +4,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 
 DB_PATH = os.environ.get("DB_PATH", "/tmp/cloud_tasks.db")
+APP_VERSION = os.environ.get("APP_VERSION", "1.1.0")
 
 
 def create_app(test_config=None):
@@ -20,12 +21,22 @@ def create_app(test_config=None):
         return db
 
     with connect() as db:
-        db.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS tasks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT NOT NULL, "
+            "done INTEGER NOT NULL DEFAULT 0)"
+        )
         db.commit()
 
     @app.get("/")
     def index():
-        return jsonify(service="cloud-tasks-api", message="API de tarefas em nuvem", endpoints=["/health", "/tasks"])
+        return jsonify(
+            service="cloud-tasks-api",
+            version=APP_VERSION,
+            message="API de tarefas em nuvem",
+            endpoints=["/health", "/version", "/tasks"],
+        )
 
     @app.get("/health")
     def health():
@@ -36,10 +47,30 @@ def create_app(test_config=None):
         except sqlite3.Error:
             return jsonify(status="error"), 503
 
+    @app.get("/version")
+    def version():
+        return jsonify(service="cloud-tasks-api", version=APP_VERSION), 200
+
     @app.get("/tasks")
     def list_tasks():
+        done_param = request.args.get("done")
+        query = "SELECT id, title, done FROM tasks"
+        params = ()
+
+        if done_param is not None:
+            normalized = done_param.strip().lower()
+            if normalized == "true":
+                query += " WHERE done = ?"
+                params = (1,)
+            elif normalized == "false":
+                query += " WHERE done = ?"
+                params = (0,)
+            else:
+                return jsonify(error="parametro done deve ser true ou false"), 400
+
+        query += " ORDER BY id"
         with connect() as db:
-            items = db.execute("SELECT id, title, done FROM tasks ORDER BY id").fetchall()
+            items = db.execute(query, params).fetchall()
         return jsonify([dict(id=r["id"], title=r["title"], done=bool(r["done"])) for r in items])
 
     @app.post("/tasks")
@@ -67,6 +98,15 @@ def create_app(test_config=None):
         if not cursor.rowcount:
             return jsonify(error="tarefa nao encontrada"), 404
         return jsonify(id=task_id, done=data["done"]), 200
+
+    @app.delete("/tasks/<int:task_id>")
+    def delete_task(task_id):
+        with connect() as db:
+            cursor = db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+            db.commit()
+        if not cursor.rowcount:
+            return jsonify(error="tarefa nao encontrada"), 404
+        return "", 204
 
     return app
 
