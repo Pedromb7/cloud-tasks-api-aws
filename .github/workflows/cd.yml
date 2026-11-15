@@ -10,7 +10,7 @@ jobs:
   deploy:
     # Only successful CI runs started by pushes to main.
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: production
     steps:
       - uses: actions/checkout@v4
